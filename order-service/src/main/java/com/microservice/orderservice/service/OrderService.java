@@ -4,7 +4,7 @@ import com.microservice.orderservice.payload.request.OrderRequest;
 import com.microservice.orderservice.payload.response.OrderResponse;
 
 public interface OrderService {
-    long placeOrder(OrderRequest orderRequest);
+    long placeOrder(OrderRequest orderRequest) throws Exception;
 
     OrderResponse getOrderDetails(long orderId);
 }

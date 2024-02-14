@@ -5,6 +5,7 @@ import java.time.Instant;
 
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.reactive.function.client.WebClient;
 
 import com.microservice.orderservice.exception.OrderServiceCustomException;
 import com.microservice.orderservice.model.Order;
@@ -24,58 +25,69 @@ import lombok.extern.log4j.Log4j2;
 public class OrderServiceImpl implements OrderService {
 
     private final OrderRepository orderRepository;
+    
+    private final WebClient webClient;
 
     private final RestTemplate restTemplate;
 
     @Override
-    public long placeOrder(OrderRequest orderRequest) {
+    public long placeOrder(OrderRequest orderRequest) throws Exception {
 
         log.info("OrderServiceImpl | placeOrder is called");
-
+        //check first if the quantity is in stock
         //Order Entity -> Save the data with Status Order Created
         //Product Service - Block Products (Reduce the Quantity)
         //Payment Service -> Payments -> Success-> COMPLETE, Else
         //CANCELLED
+        boolean result = webClient.get()
+        				.uri("http://localhost:8081/product/inStock/"+orderRequest.getProductId())
+        				.retrieve()
+        				.bodyToMono(Boolean.class)
+        				.block();
+        if(result) {
+        	log.info("OrderServiceImpl | placeOrder | Placing Order Request orderRequest : " + orderRequest.toString());
 
-        log.info("OrderServiceImpl | placeOrder | Placing Order Request orderRequest : " + orderRequest.toString());
+            log.info("OrderServiceImpl | placeOrder | Creating Order with Status CREATED");
+            Order order = Order.builder()
+                    .amount(orderRequest.getTotalAmount())
+                    .orderStatus("CREATED")
+                    .productId(orderRequest.getProductId())
+                    .orderDate(Instant.now())
+                    .quantity(orderRequest.getQuantity())
+                    .build();
+            
+            order = orderRepository.save(order);
 
-        log.info("OrderServiceImpl | placeOrder | Creating Order with Status CREATED");
-        Order order = Order.builder()
-                .amount(orderRequest.getTotalAmount())
-                .orderStatus("CREATED")
-                .productId(orderRequest.getProductId())
-                .orderDate(Instant.now())
-                .quantity(orderRequest.getQuantity())
-                .build();
+            log.info("OrderServiceImpl | placeOrder | Calling Payment Service to complete the payment");
 
-        order = orderRepository.save(order);
+            PaymentRequest paymentRequest
+                    = PaymentRequest.builder()
+                    .orderId(order.getId())
+                    .paymentMode(orderRequest.getPaymentMode())
+                    .amount(orderRequest.getTotalAmount())
+                    .build();
 
-        log.info("OrderServiceImpl | placeOrder | Calling Payment Service to complete the payment");
+            String orderStatus = null;
 
-        PaymentRequest paymentRequest
-                = PaymentRequest.builder()
-                .orderId(order.getId())
-                .paymentMode(orderRequest.getPaymentMode())
-                .amount(orderRequest.getTotalAmount())
-                .build();
+            try {
+                log.info("OrderServiceImpl | placeOrder | Payment done Successfully. Changing the Oder status to PLACED");
+                orderStatus = "PLACED";
+            } catch (Exception e) {
+                log.error("OrderServiceImpl | placeOrder | Error occurred in payment. Changing order status to PAYMENT_FAILED");
+                orderStatus = "PAYMENT_FAILED";
+            }
 
-        String orderStatus = null;
+            order.setOrderStatus(orderStatus);
 
-        try {
-            log.info("OrderServiceImpl | placeOrder | Payment done Successfully. Changing the Oder status to PLACED");
-            orderStatus = "PLACED";
-        } catch (Exception e) {
-            log.error("OrderServiceImpl | placeOrder | Error occurred in payment. Changing order status to PAYMENT_FAILED");
-            orderStatus = "PAYMENT_FAILED";
+            orderRepository.save(order);
+
+            log.info("OrderServiceImpl | placeOrder | Order Places successfully with Order Id: {}", order.getId());
+     
+            return order.getId();
+        } else {
+        	throw new Exception("Product is not in stock, please try against later");
         }
-
-        order.setOrderStatus(orderStatus);
-
-        orderRepository.save(order);
-
-        log.info("OrderServiceImpl | placeOrder | Order Places successfully with Order Id: {}", order.getId());
-
-        return order.getId();
+        
     }
 
     @Override
